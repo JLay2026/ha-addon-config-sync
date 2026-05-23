@@ -3,7 +3,7 @@
 # Source the bashio library (HA add-on option parsing + logging)
 source /usr/lib/bashio/bashio.sh
 # ---------------------------------------------------------------
-# Config Sync (GitOps) — HA Supervisor Add-on  v1.1.3
+# Config Sync (GitOps) — HA Supervisor Add-on  v1.1.6
 #
 # Bidirectional sync:
 #   IMPORT — pull config from GitHub → validate → reload HA
@@ -42,6 +42,16 @@ if [ -z "${EXPORT_BRANCH}" ]; then
 fi
 
 # ── Helpers ────────────────────────────────────────────────────────
+
+# Sanitize PAT from log output to avoid leaking credentials.
+sanitize_output() {
+    local text="$1"
+    if [ -n "${PAT}" ]; then
+        echo "${text//${PAT}/***}"
+    else
+        echo "${text}"
+    fi
+}
 
 # Build the sync_paths allowlist from config.
 build_sync_filter() {
@@ -211,11 +221,12 @@ do_export() {
         return 1
     fi
 
-    if git push origin "${EXPORT_BRANCH}" --quiet 2>/dev/null; then
+    local push_output
+    if push_output=$(git push origin "${EXPORT_BRANCH}" 2>&1); then
         bashio::log.info "Export (${label}): pushed to origin/${EXPORT_BRANCH}"
         date -u '+%s' > "${LAST_EXPORT_TS}"
     else
-        bashio::log.error "Export (${label}): push failed"
+        bashio::log.error "Export (${label}): push failed — $(sanitize_output "${push_output}")"
     fi
 
     # Switch back to sync branch if different
@@ -232,8 +243,9 @@ do_import() {
     cd "${REPO_DIR}"
 
     # Fetch
-    if ! git fetch origin "${BRANCH}" --quiet 2>/dev/null; then
-        bashio::log.error "git fetch failed — will retry next cycle"
+    local fetch_output
+    if ! fetch_output=$(git fetch origin "${BRANCH}" 2>&1); then
+        bashio::log.error "git fetch failed: $(sanitize_output "${fetch_output}") — will retry next cycle"
         return 1
     fi
 

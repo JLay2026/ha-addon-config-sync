@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.6
+
+- **Fix**: Log actual git push/fetch error messages instead of swallowing
+  stderr with `2>/dev/null` — PAT is sanitized from output
+- Added `sanitize_output()` helper to strip credentials from log messages
+
 ## 1.1.5
 
 - **Feature**: Add `scripts/` directory to default `sync_paths` so
