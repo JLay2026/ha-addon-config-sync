@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.4
+
+- **Fix**: Add `homeassistant_api: true` to config.yaml so the add-on
+  can call HA Core's `check_config` and `reload_all` endpoints
+  (fixes "check-config API unreachable" errors)
+
 ## 1.1.3
 
 - **Fix**: Use `#!/usr/bin/with-contenv bash` shebang to get Supervisor
