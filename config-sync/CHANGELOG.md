@@ -1,17 +1,23 @@
 # Changelog
 
+## 1.1.3
+
+- **Fix**: Use `#!/usr/bin/with-contenv bash` shebang to get Supervisor
+  token and container environment (fixes "Unable to access the API,
+  forbidden" errors from bashio)
+- **Fix**: Set `$HOME` before `git config --global` to prevent
+  "fatal: $HOME not set" error
+
 ## 1.1.2
 
 - **Fix**: Replace `#!/usr/bin/with-bashio` shebang with `#!/usr/bin/env bash`
   plus explicit `source /usr/lib/bashio/bashio.sh` to resolve
   `/run.sh: not found` when the `with-bashio` wrapper is missing
-  from the base image
 
 ## 1.1.1
 
 - **Fix**: Update base images from Alpine 3.20 to 3.21
-  (3.20 tags were removed from ghcr.io/home-assistant in Dec 2025,
-  causing Docker build failures)
+  (3.20 tags were removed from ghcr.io/home-assistant in Dec 2025)
 
 ## 1.1.0
 

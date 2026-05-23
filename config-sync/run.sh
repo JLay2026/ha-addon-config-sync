@@ -1,9 +1,9 @@
-#!/usr/bin/env bash
+#!/usr/bin/with-contenv bash
 # shellcheck shell=bash
 # Source the bashio library (HA add-on option parsing + logging)
 source /usr/lib/bashio/bashio.sh
 # ---------------------------------------------------------------
-# Config Sync (GitOps) — HA Supervisor Add-on  v1.1.2
+# Config Sync (GitOps) — HA Supervisor Add-on  v1.1.3
 #
 # Bidirectional sync:
 #   IMPORT — pull config from GitHub → validate → reload HA
@@ -13,6 +13,9 @@ source /usr/lib/bashio/bashio.sh
 # via bashio.  The Supervisor token is auto-injected by HA.
 # ---------------------------------------------------------------
 set -euo pipefail
+
+# Ensure HOME is set (needed by git config --global)
+export HOME="${HOME:-/root}"
 
 # ── Read add-on options ──────────────────────────────────────────────────
 REPO=$(bashio::config 'github_repo')
