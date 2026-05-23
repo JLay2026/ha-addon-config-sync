@@ -1,0 +1,39 @@
+name: "Config Sync (GitOps)"
+description: >-
+  Pulls Home Assistant configuration from a GitHub repo on a schedule,
+  validates via the Supervisor API, reloads on success, and auto-rolls
+  back on failure. Zero SSH — fully GUI-managed.
+version: "1.0.0"
+slug: "config-sync"
+url: "https://github.com/JLay2026/ha-addon-config-sync"
+startup: application
+boot: auto
+arch:
+  - amd64
+  - aarch64
+  - armv7
+  - i386
+init: false
+map:
+  - config:rw
+options:
+  github_repo: ""
+  branch: "main"
+  check_interval: 300
+  sync_paths:
+    - "configuration.yaml"
+    - "automations.yaml"
+    - "scripts.yaml"
+    - "scenes.yaml"
+    - "groups.yaml"
+    - "customize.yaml"
+    - "packages/"
+    - "dashboards/"
+  github_pat: ""
+schema:
+  github_repo: "url"
+  branch: "str"
+  check_interval: "int(60,3600)"
+  sync_paths:
+    - "str"
+  github_pat: "str?"
