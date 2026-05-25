@@ -906,3 +906,4 @@ while true; do
     fi
 
     sleep "${INTERVAL}"
+done
