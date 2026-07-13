@@ -876,7 +876,7 @@ ha_backup_pre_sync() {
     local name="${PRE_SYNC_BACKUP_PREFIX}${target_sha:0:8}"
     local body
     # JSON body. addons=[] folders=["homeassistant"] compressed=true
-    body=$(printf '{"name":"%s","addons":[],"folders":["homeassistant"],"compressed":true}' "${name}")
+    body=$(printf '{"name":"%s","addons":[],"folders":["homeassistant"],"compressed":true,"background":true}' "${name}")
     if ! supervisor_api POST "/backups/new/partial" "${body}" > /dev/null; then
         log_supervisor_error "Pre-sync HA backup API failed — REFUSING to sync"
         bashio::log.error "  Common causes for this endpoint:"
