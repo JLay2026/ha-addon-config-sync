@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.6.4
+
+Field-discovered fix: the pre-sync HA backup step aborted **every** sync on
+installs with a large recorder database. `ha_backup_pre_sync()` requests a
+compressed backup of the `homeassistant` folder (covers `/config` + `.storage`),
+and current Supervisor (2026.06.x) returns from `POST /backups/new/partial`
+only *after* the backup file is written — not when the job is accepted, as the
+code assumed. Compressing a multi-GB `/config` (dominated by
+`home-assistant_v2.db`) exceeded the 30s `SUPERVISOR_API_TIMEOUT`, so
+`supervisor_api()` returned `HTTP 000` and the sync was (correctly) aborted and
+rolled back — retrying and failing identically every cycle.
+
+- **Fix**: add `"background": true` to the `/backups/new/partial` request body
+  so Supervisor returns as soon as it ACCEPTS the job (matching the function's
+  original async assumption), regardless of backup size. The endpoint still
+  returns HTTP 2xx on accept, so no response-parsing change is needed.
+- **Fix**: raise `SUPERVISOR_API_TIMEOUT` 30 → 90 as headroom for job-accept
+  and the per-cycle check_config/health probes; still bounded so a hung
+  Supervisor cannot wedge the single-threaded loop.
+- **Field incident**: 2026-07-13, `JLay2026/home-assistant-config` deploy
+  (merge `116b9e0c`). Recorder DB ~9.8 GB; every 5-min cycle logged
+  `Pre-sync HA backup API failed — REFUSING to sync (no response)` and rolled
+  back to the prior SHA. Disk (~111 GB free), backup manager (idle), and
+  Supervisor health were all fine — the sole cause was the 30s cap vs the
+  synchronous compressed backup.
+- **No new options**; no schema changes; no permission changes. Existing
+  deployments get the fix automatically on update.
+
 ## 1.6.3
 
 Field-discovered regression fix: diff-sync was silently dropping file

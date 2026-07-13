@@ -166,7 +166,7 @@ trap 'rm -f "${SUPERVISOR_RESP_BODY_FILE}" "${SUPERVISOR_RESP_CODE_FILE}"' EXIT
 # 30s max per call is comfortable for /backups/new/partial (which
 # returns when HA accepts the job, not when the backup completes)
 # and tight enough for the per-cycle health probes.
-SUPERVISOR_API_TIMEOUT=30
+SUPERVISOR_API_TIMEOUT=90
 SUPERVISOR_API_CONNECT_TIMEOUT=5
 
 # Persistent-notification ID used by notify_sync_failure / _recovered.
@@ -876,7 +876,7 @@ ha_backup_pre_sync() {
     local name="${PRE_SYNC_BACKUP_PREFIX}${target_sha:0:8}"
     local body
     # JSON body. addons=[] folders=["homeassistant"] compressed=true
-    body=$(printf '{"name":"%s","addons":[],"folders":["homeassistant"],"compressed":true}' "${name}")
+    body=$(printf '{"name":"%s","addons":[],"folders":["homeassistant"],"compressed":true,"background":true}' "${name}")
     if ! supervisor_api POST "/backups/new/partial" "${body}" > /dev/null; then
         log_supervisor_error "Pre-sync HA backup API failed — REFUSING to sync"
         bashio::log.error "  Common causes for this endpoint:"
