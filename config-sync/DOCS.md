@@ -41,7 +41,11 @@ When `export_enabled` is true:
 1. **On startup**, the add-on runs an immediate export.
 2. Every `export_interval` seconds, it compares `/config` files against the repo.
 3. If HA-side changes are detected, the add-on commits and pushes them.
-4. Immediately after an import, the next export cycle is skipped.
+4. An export cycle right after an import is a no-op (the import left
+   `/config` identical to the repo, so there is nothing to commit).
+   Prior to v1.6.5 a separate skip-after-import guard existed; it was
+   broken (it disabled export permanently after the first import) and
+   was removed.
 5. **Each export cycle with real changes writes a per-export structured
    log (v1.5.3+)** under `/data/logs/export/`.
 
