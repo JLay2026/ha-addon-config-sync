@@ -1,5 +1,37 @@
 # Changelog
 
+## 1.6.5
+
+Field-discovered fix: **export was permanently dead after the first
+import.** `do_export()` skipped the cycle whenever `/data/.last-import`
+held the same SHA as `HEAD` — but `do_import()` wrote `HEAD` into that
+marker on every successful import, and nothing except an export commit
+ever moved `HEAD`. So after the first import the guard fired on every
+cycle, forever. The skip was logged at DEBUG, so at the default log
+level the add-on printed "Export enabled — running initial export" and
+then nothing — indistinguishable from "no changes".
+
+- **Fix**: remove the marker-SHA guard. It was redundant as well as
+  broken: an import copies repo → `/config`, so the `git diff --cached
+  --quiet` check that follows already sees no delta and the cycle is a
+  no-op. That diff check is now the sole authority. Stale
+  `/data/.last-import` files from earlier versions are deleted once at
+  startup.
+- **Change**: the "no changes to export" line is now INFO (was DEBUG) —
+  at most one line per `export_interval` — so operators can see the
+  export cycle actually ran.
+- **Change**: `github_pat` schema type `str?` → `password?` so the
+  Supervisor UI masks the token in the add-on Configuration tab. UI
+  masking only; the Supervisor options API still returns it to
+  admin-scoped callers. Use a fine-grained PAT scoped to the config
+  repo (DOCS.md) to bound blast radius.
+- **Field incident**: `JLay2026/home-assistant-config` — last export
+  before the last import was 2026-07-14 (merge of PR #71). Every
+  HA-side edit since then stayed on the box; discovered 2026-10-03
+  while investigating repo/`/config` drift.
+- **No new options**; schema type change only (existing value is
+  preserved on update); no permission changes.
+
 ## 1.6.4
 
 Field-discovered fix: the pre-sync HA backup step aborted **every** sync on

@@ -3,7 +3,7 @@
 # Source the bashio library (HA add-on option parsing + logging)
 source /usr/lib/bashio/bashio.sh
 # ---------------------------------------------------------------
-# Config Sync (GitOps) — HA Supervisor Add-on  v1.6.2
+# Config Sync (GitOps) — HA Supervisor Add-on  v1.6.5
 #
 # Bidirectional sync:
 #   IMPORT — pull config from GitHub → backup HA → validate → reload → verify
@@ -144,8 +144,12 @@ RESTART_EXTRA_SETTLE=25
 REPO_DIR="/data/repo"
 CONFIG_DIR="/config"
 ROLLBACK_DIR="/data/.rollback"
-LAST_IMPORT_MARKER="/data/.last-import"
 LAST_EXPORT_TS="/data/.last-export-ts"
+# v1.6.5: /data/.last-import (the post-import export-skip marker) was
+# removed. See do_export() for why. Stale marker files from earlier
+# versions are harmless and are cleaned up once at startup below.
+LEGACY_IMPORT_MARKER="/data/.last-import"
+rm -f "${LEGACY_IMPORT_MARKER}" 2>/dev/null || true
 
 # Diagnostic-capture temp files for supervisor_api().
 # These survive the subshell boundary used by `var=$(supervisor_api ...)`,
@@ -1366,18 +1370,17 @@ do_export() {
 
     cd "${REPO_DIR}"
 
-    # If we just did an import, skip this export cycle to avoid
-    # re-committing what we just pulled.
-    if [ -f "${LAST_IMPORT_MARKER}" ]; then
-        local import_sha
-        import_sha=$(cat "${LAST_IMPORT_MARKER}")
-        local current_sha
-        current_sha=$(git rev-parse HEAD)
-        if [ "${import_sha}" = "${current_sha}" ]; then
-            bashio::log.debug "Skipping export — last action was an import"
-            return 0
-        fi
-    fi
+    # v1.6.5: the former "skip export if the last action was an import"
+    # guard is gone. It compared a marker SHA written by do_import() to
+    # HEAD — but do_import() wrote HEAD into the marker, and nothing
+    # except an export commit ever moved HEAD, so after the FIRST import
+    # the guard fired on every cycle and export was permanently dead
+    # (logged only at DEBUG, hence invisible). Field incident: export
+    # silently stopped 2026-07-14, discovered 2026-10-03.
+    #
+    # The guard was also redundant: an import copies repo → /config, so
+    # `git diff --cached --quiet` below sees no delta and the cycle is a
+    # no-op anyway. That diff check is the sole authority now.
 
     # Ensure we're on the export branch
     local current_branch
@@ -1421,7 +1424,9 @@ do_export() {
     # Check for actual changes
     git add -A
     if git diff --cached --quiet; then
-        bashio::log.debug "Export (${label}): no changes to export"
+        # INFO (was DEBUG pre-1.6.5) so operators can see the export
+        # cycle actually ran — at most one line per export_interval.
+        bashio::log.info "Export (${label}): no changes to export"
         checkout_back_to_sync_branch || true
         return 0
     fi
@@ -1767,8 +1772,6 @@ do_import() {
         fi
 
         rm -rf "${BACKUP}"
-        # Mark that we just imported — export should skip next cycle
-        git rev-parse HEAD > "${LAST_IMPORT_MARKER}"
         # Healthy sync completed — dismiss any prior failure notification
         # so the operator's UI is clean.
         notify_sync_recovered

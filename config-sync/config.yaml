@@ -3,7 +3,7 @@ description: >-
   Bidirectional GitOps for Home Assistant — pulls config from GitHub,
   validates and reloads; exports HA-side changes back to GitHub.
   Zero SSH, fully GUI-managed.
-version: "1.6.4"
+version: "1.6.5"
 slug: "config-sync"
 url: "https://github.com/JLay2026/ha-addon-config-sync"
 startup: application
@@ -77,7 +77,12 @@ schema:
   check_interval: "int(60,3600)"
   sync_paths:
     - "str"
-  github_pat: "str?"
+  # v1.6.5: `password` type so the Supervisor UI masks the token in the
+  # add-on Configuration tab. Note this is UI masking only — the
+  # Supervisor options API still returns the value to admin-scoped
+  # callers; a fine-grained PAT scoped to the config repo is the real
+  # blast-radius control (see DOCS.md).
+  github_pat: "password?"
   export_enabled: "bool"
   export_interval: "int(300,86400)"
   export_branch: "str?"
