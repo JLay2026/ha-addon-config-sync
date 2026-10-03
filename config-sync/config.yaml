@@ -3,7 +3,7 @@ description: >-
   Bidirectional GitOps for Home Assistant — pulls config from GitHub,
   validates and reloads; exports HA-side changes back to GitHub.
   Zero SSH, fully GUI-managed.
-version: "1.6.5"
+version: "1.7.0"
 slug: "config-sync"
 url: "https://github.com/JLay2026/ha-addon-config-sync"
 startup: application
@@ -71,6 +71,11 @@ options:
   # v1.6.0 (Sprint 5 P1, M6): block syncs where any tracked file in
   # sync_paths is a symlink (path-traversal vector via cp).
   block_symlinks: true
+  # v1.7.0: paths to exclude even when inside a sync_paths entry.
+  # Same syntax as sync_paths (trailing slash = directory prefix).
+  # Exclusions always win, in both directions. Lets you track
+  # `esphome/` without ever committing `esphome/secrets.yaml`.
+  exclude_paths: []
 schema:
   github_repo: "url"
   branch: "str"
@@ -96,3 +101,5 @@ schema:
   allowed_repo_hosts:
     - "str"
   block_symlinks: "bool"
+  exclude_paths:
+    - "str"
