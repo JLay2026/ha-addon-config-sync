@@ -68,6 +68,7 @@ When `export_enabled` is true:
 | `pre_sync_backup_name_prefix` | No | `gitops-pre-` | Prefix for pre-sync HA backup names (v1.6.2+). Whatever prefix is set is what retention-prune matches on — changing it leaves old auto-backups untracked, so prune will leave them alone forever. |
 | `allowed_repo_hosts` | No | `["github.com"]` | List of hostnames `github_repo` is allowed to point at (v1.6.0+). Subdomain matches allowed via suffix-match. Add your GitHub Enterprise hostname here if applicable. Setting this to an empty list defaults back to `["github.com"]`. |
 | `block_symlinks` | No | `true` | Abort sync if any tracked file in `sync_paths` is a symlink (v1.6.0+). Symlinks in tracked config files are a path-traversal vector. Set to `false` if you intentionally use symlinks and accept the risk. |
+| `exclude_paths` | No | `[]` | Paths to leave out of sync even when inside a `sync_paths` entry (v1.7.0+). Same syntax as `sync_paths`. Exclusions always win, in both directions. See "exclude_paths" below. |
 
 ### Export options
 
@@ -99,6 +100,32 @@ a directory not in `sync_paths`, files under that directory are silently
 skipped during sync — unless `strict_sync_paths_check` (v1.5.1+) blocks
 the sync first. The v1.1.7 startup audit also warns about this at
 add-on start.
+
+### exclude_paths (v1.7.0+)
+
+Subtracts from `sync_paths`. Same syntax: a trailing `/` is a directory
+prefix, anything else is an exact file. Checked before the allowlist,
+so an excluded path is never imported, exported, reconciled, or
+symlink-checked.
+
+The canonical use is tracking ESPHome device definitions without the
+secrets file or build cache:
+
+```yaml
+sync_paths:
+  - configuration.yaml
+  - packages/
+  - esphome/
+exclude_paths:
+  - esphome/secrets.yaml
+  - esphome/.esphome/
+  - esphome/trash/
+```
+
+Note that `www/` and other non-YAML directories are effectively
+import-only: export copies only `*.yaml` / `*.yml`, so JavaScript,
+images, and the like flow repo → `/config` but never back. Treat the
+repo as the sole editor for those.
 
 ## Repo trust (v1.6.0+)
 

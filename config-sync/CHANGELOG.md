@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.7.0
+
+New option: **`exclude_paths`** — paths to leave out of sync even when
+they fall inside a `sync_paths` entry. Same syntax as `sync_paths`
+(trailing `/` = directory prefix, otherwise exact file). Exclusions
+are evaluated before the allowlist and always win, in both directions:
+import never copies an excluded file to `/config`, export never stages
+one into the repo, and the reconcile pass and tracked-symlink guard
+skip it.
+
+Motivating case: tracking `esphome/` (device definitions are real
+config worth reviewing) without ever committing `esphome/secrets.yaml`,
+the `esphome/.esphome/` build cache, or `esphome/trash/`. Prior to
+this release the directory pattern in `stage_config_to_repo()` would
+have exported every `*.yaml` under the directory, secrets included.
+
+- **Feature**: `exclude_paths: list[str]` (default `[]`). Read at
+  startup next to the other list options; logged as `Exclude paths:`
+  when non-empty.
+- **Change**: `path_allowed()` checks `EXCLUDE_PATHS` first and returns
+  1 on a match. Every caller (import filter, reconcile, symlink guard,
+  sync_paths-gap probe) inherits the behaviour.
+- **Change**: `stage_config_to_repo()` now runs each candidate through
+  `path_allowed()` — both the directory `find` loop and the exact-file
+  branch — so export honours exclusions too.
+- **Minor bump** because it adds a schema key. Existing installs get
+  `exclude_paths: []` on update; no behaviour change until set.
+- **No permission changes.**
+
 ## 1.6.5
 
 Field-discovered fix: **export was permanently dead after the first
