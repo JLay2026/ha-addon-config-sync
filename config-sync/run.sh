@@ -3,7 +3,7 @@
 # Source the bashio library (HA add-on option parsing + logging)
 source /usr/lib/bashio/bashio.sh
 # ---------------------------------------------------------------
-# Config Sync (GitOps) — HA Supervisor Add-on  v1.6.5
+# Config Sync (GitOps) — HA Supervisor Add-on  v1.7.0
 #
 # Bidirectional sync:
 #   IMPORT — pull config from GitHub → backup HA → validate → reload → verify
@@ -136,6 +136,22 @@ if [ -z "${BLOCK_SYMLINKS}" ]; then
     BLOCK_SYMLINKS="true"
 fi
 
+# Paths to EXCLUDE from sync even when they fall inside a sync_paths
+# entry (v1.7.0). Same syntax as sync_paths: a trailing slash means a
+# directory prefix, anything else is an exact file. Checked by
+# path_allowed() before the allowlist, so an exclusion always wins.
+# Applies to both directions — import never copies an excluded file to
+# /config, export never stages one into the repo, reconcile and the
+# symlink guard skip it. Motivating case: tracking `esphome/` without
+# ever committing `esphome/secrets.yaml` or the `esphome/.esphome/`
+# build cache. Default: empty.
+EXCLUDE_PATHS=()
+_i=0
+while bashio::config.exists "exclude_paths[${_i}]"; do
+    EXCLUDE_PATHS+=("$(bashio::config "exclude_paths[${_i}]")")
+    _i=$((_i + 1))
+done
+
 # Extra settle seconds added to POST_SYNC_SETTLE when we used /core/restart
 # instead of reload_all — HA needs longer to come back from a full restart.
 RESTART_EXTRA_SETTLE=25
@@ -246,9 +262,19 @@ build_sync_filter() {
     done
 }
 
-# Returns 0 if $1 matches any entry in SYNC_PATHS.
+# Returns 0 if $1 matches any entry in SYNC_PATHS and no entry in
+# EXCLUDE_PATHS (v1.7.0). Exclusions are checked first and always win.
 path_allowed() {
     local file="$1"
+    local pattern
+    for pattern in "${EXCLUDE_PATHS[@]}"; do
+        if [[ "${pattern}" == */ ]] && [[ "${file}" == "${pattern}"* ]]; then
+            return 1
+        fi
+        if [[ "${file}" == "${pattern}" ]]; then
+            return 1
+        fi
+    done
     for pattern in "${SYNC_PATHS[@]}"; do
         if [[ "${pattern}" == */ ]] && [[ "${file}" == "${pattern}"* ]]; then
             return 0
@@ -1286,6 +1312,9 @@ fi
 # Build the path allowlist once at startup.
 build_sync_filter
 bashio::log.info "Sync paths: ${SYNC_PATHS[*]}"
+if [ "${#EXCLUDE_PATHS[@]}" -gt 0 ]; then
+    bashio::log.info "Exclude paths: ${EXCLUDE_PATHS[*]}"
+fi
 
 # Audit configuration.yaml against the freshly-built sync_paths
 # allowlist. Catches the 2026-05-25 incident class at add-on startup
@@ -1326,6 +1355,10 @@ stage_config_to_repo() {
                 while IFS= read -r src; do
                     [ -z "${src}" ] && continue
                     rel="${src#"${CONFIG_DIR}"/}"
+                    # v1.7.0: exclude_paths wins (e.g. esphome/secrets.yaml)
+                    if ! path_allowed "${rel}"; then
+                        continue
+                    fi
                     mkdir -p "${REPO_DIR}/$(dirname "${rel}")"
                     if ! cmp -s "${src}" "${REPO_DIR}/${rel}" 2>/dev/null; then
                         cp -p "${src}" "${REPO_DIR}/${rel}"
@@ -1334,8 +1367,8 @@ stage_config_to_repo() {
                 done < <(find "${CONFIG_DIR}/${pattern}" -type f \( -name '*.yaml' -o -name '*.yml' \) 2>/dev/null)
             fi
         else
-            # Exact file match
-            if [ -f "${CONFIG_DIR}/${pattern}" ]; then
+            # Exact file match (v1.7.0: unless excluded)
+            if [ -f "${CONFIG_DIR}/${pattern}" ] && path_allowed "${pattern}"; then
                 if ! cmp -s "${CONFIG_DIR}/${pattern}" "${REPO_DIR}/${pattern}" 2>/dev/null; then
                     mkdir -p "${REPO_DIR}/$(dirname "${pattern}")"
                     cp -p "${CONFIG_DIR}/${pattern}" "${REPO_DIR}/${pattern}"
