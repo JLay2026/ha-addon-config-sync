@@ -1,5 +1,54 @@
 # Changelog
 
+## 1.7.1
+
+Two field-discovered fixes to the pre-sync HA backup, from the
+2026-10-05 `JLay2026/home-assistant-config` #83 deploy (a
+`lovelace:` block change).
+
+**The lovelace-change restart never happened.** `do_import()` requested
+the background pre-sync backup and called `homeassistant.restart` two
+seconds later. Home Assistant refuses to restart while a backup is being
+created; the Supervisor proxy surfaced the refusal as `HTTP 500 Server got
+itself in trouble`, the add-on logged "Manual HA restart may be needed"
+and moved on — so the files were in place but the dashboard registration
+change sat un-applied until a human restarted HA. The structured log said
+`event=reload_call result=failed strategy=core_restart` and nothing else
+flagged it.
+
+- **Fix**: new `wait_for_pre_sync_backup()` polls `GET /backups` every 5 s
+  until the just-requested backup is listed (Supervisor lists a backup
+  only once its file is written), up to `BACKUP_WAIT_TIMEOUT` (600 s),
+  before the restart path proceeds. `reload_all` is unaffected and does
+  not wait.
+- **Fix**: new `restart_core_with_retry()` tries `homeassistant.restart`
+  up to 3 times, 15 s apart, instead of giving up on the first refusal.
+  If all attempts fail, a persistent notification ("Config Sync: HA
+  restart needed") is raised in addition to the log line, so the
+  operator finds out without reading the add-on log.
+- **Fix**: the `backup_name` used for the status sensor / per-sync log was
+  hardcoded to `gitops-pre-` and ignored `pre_sync_backup_name_prefix`
+  (v1.6.2). Now uses the configured prefix.
+
+**Pre-sync backups were unencrypted.** They contain `/config` *and*
+`.storage` — every cloud credential HA holds — and were written
+`protected: false` even on installs whose scheduled backups are
+encrypted.
+
+- **Feature**: new option `pre_sync_backup_password` (`password?`,
+  default empty = unchanged behaviour). When set, the Supervisor
+  request carries `password` and the backup is encrypted. The request
+  body is now built with `jq`, so any password characters are quoted
+  safely, and the key is omitted entirely when unset — existing installs
+  send a byte-identical request. Log line and `event=backup` carry
+  `encrypted=true|false`.
+- Use the same password as your scheduled backups so one restore flow
+  covers both. Retention pruning is unaffected (it matches on name).
+
+- **New options**: `pre_sync_backup_password: "password?"` (default `""`).
+- **No permission changes** — `GET /backups` was already used by the
+  v1.5.2 prune.
+
 ## 1.7.0
 
 New option: **`exclude_paths`** — paths to leave out of sync even when

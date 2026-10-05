@@ -3,7 +3,7 @@ description: >-
   Bidirectional GitOps for Home Assistant — pulls config from GitHub,
   validates and reloads; exports HA-side changes back to GitHub.
   Zero SSH, fully GUI-managed.
-version: "1.7.0"
+version: "1.7.1"
 slug: "config-sync"
 url: "https://github.com/JLay2026/ha-addon-config-sync"
 startup: application
@@ -25,7 +25,9 @@ init: false
 #   hassio_api: true       — Supervisor API access (POST /backups/new/partial
 #                              for the pre-sync HA backup feature; v1.2.0+,
 #                              plus GET /backups + DELETE /backups/<slug> for
-#                              the v1.5.2 backup retention prune)
+#                              the v1.5.2 backup retention prune, and GET
+#                              /backups again for the v1.7.1 wait-for-backup
+#                              step before a lovelace-change restart)
 #   hassio_role: backup    — least-privilege role granting the backups API.
 #                              `manager` would also work but is broader than
 #                              necessary. Covers list + delete as well as create.
@@ -63,6 +65,11 @@ options:
   # who maintain their own manual gitops-pre-* backups (or who want
   # a distinct namespace) can override.
   pre_sync_backup_name_prefix: "gitops-pre-"
+  # v1.7.1: password for the pre-sync HA backups. Empty = unencrypted
+  # (pre-1.7.1 behaviour). The pre-sync backup carries /config + .storage
+  # — every cloud credential HA holds — so set this to the same password
+  # as your scheduled encrypted backups. UI-masked like github_pat.
+  pre_sync_backup_password: ""
   # v1.6.0 (Sprint 5 P1, M7): hostname allowlist for github_repo.
   # Default catches the misconfigured-URL PAT-exfiltration case.
   # Operators on GitHub Enterprise add their GHE hostname here.
@@ -98,6 +105,7 @@ schema:
   strict_sync_paths_check: "bool"
   pre_sync_backup_retention: "int(0,50)"
   pre_sync_backup_name_prefix: "str?"
+  pre_sync_backup_password: "password?"
   allowed_repo_hosts:
     - "str"
   block_symlinks: "bool"
