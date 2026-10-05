@@ -105,6 +105,24 @@ if [ -z "${PRE_SYNC_BACKUP_PREFIX}" ]; then
     PRE_SYNC_BACKUP_PREFIX="gitops-pre-"
 fi
 
+# Password for the pre-sync HA backups (v1.7.1). Empty = unencrypted,
+# which is what every version before 1.7.1 produced. The pre-sync backup
+# contains /config AND .storage — every cloud credential HA holds — so
+# an operator whose scheduled backups are encrypted almost certainly
+# wants these encrypted too. Use the same password as the scheduled
+# backups so one restore flow covers both.
+PRE_SYNC_BACKUP_PASSWORD=$(bashio::config 'pre_sync_backup_password')
+if [ "${PRE_SYNC_BACKUP_PASSWORD}" = "null" ]; then
+    PRE_SYNC_BACKUP_PASSWORD=""
+fi
+
+# How long the lovelace-change restart path waits for the pre-sync
+# backup to finish before calling homeassistant.restart (v1.7.1).
+# HA refuses to restart while a backup is being created; see
+# wait_for_pre_sync_backup() for the field incident.
+BACKUP_WAIT_TIMEOUT=600
+BACKUP_WAIT_INTERVAL=5
+
 # Allowlist of hostnames the github_repo URL is permitted to point at
 # (v1.6.0, Sprint 5 P1, M7). Default ["github.com"] catches the M7
 # review finding: without this, a misconfigured/social-engineered
@@ -906,7 +924,15 @@ ha_backup_pre_sync() {
     local name="${PRE_SYNC_BACKUP_PREFIX}${target_sha:0:8}"
     local body
     # JSON body. addons=[] folders=["homeassistant"] compressed=true
-    body=$(printf '{"name":"%s","addons":[],"folders":["homeassistant"],"compressed":true,"background":true}' "${name}")
+    # background=true (v1.6.4). v1.7.1: built with jq so the optional
+    # password is quoted safely whatever characters it contains; the
+    # key is omitted entirely when no password is set, which keeps the
+    # request byte-identical to pre-1.7.1 for existing installs.
+    body=$(jq -nc \
+        --arg name "${name}" \
+        --arg pw "${PRE_SYNC_BACKUP_PASSWORD}" \
+        '{name: $name, addons: [], folders: ["homeassistant"], compressed: true, background: true}
+         + (if $pw == "" then {} else {password: $pw} end)')
     if ! supervisor_api POST "/backups/new/partial" "${body}" > /dev/null; then
         log_supervisor_error "Pre-sync HA backup API failed — REFUSING to sync"
         bashio::log.error "  Common causes for this endpoint:"
@@ -916,9 +942,72 @@ ha_backup_pre_sync() {
         sync_log ERROR "event=backup name=${name} result=failed http_code=$(cat "${SUPERVISOR_RESP_CODE_FILE}" 2>/dev/null || echo ???)"
         return 1
     fi
-    bashio::log.info "Pre-sync HA backup '${name}' triggered — Settings → System → Backups"
-    sync_log INFO "event=backup name=${name} result=triggered"
+    if [ -n "${PRE_SYNC_BACKUP_PASSWORD}" ]; then
+        bashio::log.info "Pre-sync HA backup '${name}' triggered (encrypted) — Settings → System → Backups"
+        sync_log INFO "event=backup name=${name} result=triggered encrypted=true"
+    else
+        bashio::log.info "Pre-sync HA backup '${name}' triggered — Settings → System → Backups"
+        sync_log INFO "event=backup name=${name} result=triggered encrypted=false"
+    fi
     return 0
+}
+
+# Block until the pre-sync backup named $1 shows up in `GET /backups`
+# (Supervisor lists a backup only once its file is written), or until
+# BACKUP_WAIT_TIMEOUT seconds have passed. Returns 0 when the backup is
+# listed, 1 on timeout or when the list cannot be read.
+#
+# Why (v1.7.1, field incident 2026-10-05, JLay2026/home-assistant-config
+# #83): the lovelace-change path requested the background backup and
+# called homeassistant.restart two seconds later. HA refuses to restart
+# while a backup is being created, the Supervisor proxy surfaced that as
+# HTTP 500 "Server got itself in trouble", the add-on logged "Manual HA
+# restart may be needed" — and the new dashboard registration sat
+# un-applied until a human restarted HA. reload_all does not have this
+# problem, so only the restart path waits.
+wait_for_pre_sync_backup() {
+    local name="$1"
+    local waited=0 list_json found
+    while [ "${waited}" -lt "${BACKUP_WAIT_TIMEOUT}" ]; do
+        if list_json=$(supervisor_api GET "/backups"); then
+            found=$(echo "${list_json}" | jq -r --arg n "${name}" \
+                '(.data.backups // []) | map(select(.name == $n)) | length' 2>/dev/null)
+            if [ "${found:-0}" -gt 0 ]; then
+                bashio::log.info "Pre-sync HA backup '${name}' completed after ~${waited}s"
+                sync_log INFO "event=backup_wait name=${name} result=complete seconds=${waited}"
+                return 0
+            fi
+        else
+            bashio::log.debug "wait_for_pre_sync_backup: GET /backups failed (HTTP $(cat "${SUPERVISOR_RESP_CODE_FILE}" 2>/dev/null || echo ???)); retrying"
+        fi
+        sleep "${BACKUP_WAIT_INTERVAL}"
+        waited=$((waited + BACKUP_WAIT_INTERVAL))
+    done
+    bashio::log.warning "Pre-sync HA backup '${name}' still not listed after ${BACKUP_WAIT_TIMEOUT}s — proceeding anyway"
+    sync_log WARN "event=backup_wait name=${name} result=timeout seconds=${waited}"
+    return 1
+}
+
+# Call homeassistant.restart, retrying a few times with a pause between
+# attempts (v1.7.1). The first attempt can still collide with the tail of
+# a backup (Supervisor lists it a moment before HA's backup manager
+# returns to idle) or with any other transient refusal; a second or
+# third try a little later succeeds. Returns 0 on the first 2xx.
+restart_core_with_retry() {
+    local attempt max_attempts=3 pause=15
+    for attempt in 1 2 3; do
+        if supervisor_api POST "/core/api/services/homeassistant/restart" > /dev/null; then
+            [ "${attempt}" -gt 1 ] && sync_log INFO "event=reload_call result=ok strategy=core_restart attempt=${attempt}"
+            return 0
+        fi
+        log_supervisor_error "homeassistant.restart call failed (attempt ${attempt}/${max_attempts})"
+        sync_log WARN "event=reload_call result=failed strategy=core_restart attempt=${attempt} http_code=$(cat "${SUPERVISOR_RESP_CODE_FILE}" 2>/dev/null || echo ???)"
+        if [ "${attempt}" -lt "${max_attempts}" ]; then
+            bashio::log.info "  Retrying homeassistant.restart in ${pause}s"
+            sleep "${pause}"
+        fi
+    done
+    return 1
 }
 
 # Prune old gitops-pre-* HA backups, keeping only the most-recent
@@ -1617,7 +1706,7 @@ do_import() {
 
     # Deterministic backup name — also referenced by failure paths
     # in the status_mark_failure attribute payload.
-    local backup_name="gitops-pre-${REMOTE:0:8}"
+    local backup_name="${PRE_SYNC_BACKUP_PREFIX}${REMOTE:0:8}"
 
     bashio::log.info "Import: syncing $(echo "${CHANGED}" | tr '\n' ' ')"
     sync_log INFO "event=files_changed count=$(echo "${CHANGED}" | wc -l | tr -d ' ') paths=$(echo "${CHANGED}" | tr '\n' ',' | sed 's/,$//')"
@@ -1726,10 +1815,16 @@ do_import() {
             reload_settle=$((POST_SYNC_SETTLE + RESTART_EXTRA_SETTLE))
             bashio::log.info "Import: configuration.yaml lovelace block changed — calling /core/restart (reload_all does NOT re-register dashboards)"
             sync_log INFO "event=reload strategy=core_restart reason=lovelace_changed"
-            if ! supervisor_api POST "/core/api/services/homeassistant/restart" > /dev/null; then
-                log_supervisor_error "/core/restart API call failed"
+            # v1.7.1: HA refuses to restart while the pre-sync backup we
+            # just requested is still being written. Wait for it first,
+            # then retry the restart a few times rather than giving up on
+            # the first refusal.
+            wait_for_pre_sync_backup "${backup_name}" || true
+            if ! restart_core_with_retry; then
                 bashio::log.warning "  Manual HA restart may be needed for lovelace dashboards to register."
-                sync_log WARN "event=reload_call result=failed strategy=core_restart"
+                notify_sync_failure \
+                    "Config Sync: HA restart needed" \
+                    "Sync ${REMOTE:0:8} changed the lovelace block in configuration.yaml but homeassistant.restart kept failing (see the add-on log). Files are in place; restart Home Assistant to register the dashboard change."
             fi
         elif sync_touches_themes; then
             reload_strategy="reload_all + frontend.reload_themes"

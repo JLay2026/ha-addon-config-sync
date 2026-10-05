@@ -373,3 +373,29 @@ Any agent or automation platform that can call the HA REST API can:
 NanoClaw's `agent-homeops` is the intended primary consumer of
 `sensor.config_sync_status` — it polls the state and surfaces failures
 via Telegram without needing `docker exec`.
+
+## Pre-sync backup encryption and the lovelace-change restart (v1.7.1)
+
+**`pre_sync_backup_password`** (default empty). The pre-sync HA backup the
+add-on takes before every import contains `/config` and `.storage` — the
+latter holds every cloud credential Home Assistant has (config entries for
+Culligan, Moen, Bambu, Synology, …). Before 1.7.1 these backups were always
+written unencrypted (`protected: false` in Settings → System → Backups),
+even when the scheduled backups were encrypted. Set this option to the
+same password as your scheduled backups and every `gitops-pre-*` backup
+from then on is encrypted; existing unencrypted ones are pruned out by
+`pre_sync_backup_retention` over the following syncs. The value is
+UI-masked like `github_pat`; the same caveat applies (the Supervisor
+options API still returns it to admin-scoped callers).
+
+**Restart waits for the backup.** When a sync changes the `lovelace:` block
+of `configuration.yaml` and `restart_on_lovelace_change` is on, the add-on
+now waits (up to 10 min, polling `GET /backups` every 5 s) for the pre-sync
+backup it just requested to finish before calling `homeassistant.restart`,
+and retries the restart up to three times 15 s apart. Home Assistant
+refuses to restart while a backup is being created; before 1.7.1 the
+add-on fired the restart two seconds after starting the backup, got an
+HTTP 500 back, logged a warning, and left the dashboard change
+un-registered until someone restarted HA by hand. If every attempt still
+fails you now get a persistent notification ("Config Sync: HA restart
+needed") rather than only a log line.
