@@ -1,5 +1,61 @@
 # Changelog
 
+## 1.7.2
+
+Housekeeping release: two import correctness fixes found in the field,
+plus the dependency hygiene left over from the hardening roadmap (#9).
+
+**Renames left the old file in `/config`** ([#33](https://github.com/JLay2026/ha-addon-config-sync/issues/33)).
+`do_import()` built its change list with `git diff --name-only`, which
+runs git's rename detection; a `git mv old new` with ≥ 50 % similarity
+was reported as a single entry carrying only the new path. The new file
+was copied in, the old one was never deleted, and both loaded as
+packages (duplicate helpers and template entities, two automations
+registering the same `webhook_id`). Seen 2026-10-17 on
+home-assistant-config #119 (`front_door_lock.yaml` →
+`garage_door_lock.yaml`). Because the leftover sat inside `packages/`,
+the hourly export would also have staged it back onto the export
+branch.
+
+- **Fix**: `git diff --name-only --no-renames`, so a rename surfaces as
+  `D old` + `A new` and the existing add/modify/delete loop handles
+  both paths. The file-level rollback snapshot now captures the old
+  file too.
+
+**Rollback leaked files the sync had added** ([#27](https://github.com/JLay2026/ha-addon-config-sync/issues/27)).
+The three rollback paths (check_config API failure, check_config
+invalid, post-sync verify failure) restored files from the pre-sync
+snapshot, but a file that did not exist before the sync has no
+snapshot, so it stayed in `/config` after a "successful" rollback and
+check_config kept failing on the next add-on start with no commit to
+explain it. With #33 fixed this also covers the new half of a rename.
+
+- **Fix**: the change-list pass records which paths are new to
+  `/config` (`ADDED_FILES`); a shared `rollback_config_files()` restores
+  the snapshot and removes those, replacing the three copies of the
+  restore loop.
+
+**Log visibility.** `Import: syncing …` now tags each path with its
+operation (`A:`/`M:`/`D:`), `Import: deleted <path>` is INFO instead of
+DEBUG, and the per-sync `event=files_changed` line gains an `ops=` field
+alongside the unchanged `paths=`. A deletion that did not happen is now
+visible from the add-on log.
+
+**Dependencies.**
+
+- Base image Alpine 3.21 → 3.24 (`ghcr.io/home-assistant/*-base:3.24`).
+  3.21 leaves Alpine support on 2026-11-01.
+- **Dropped `armv7` and `i386`** from `build.yaml` and `config.yaml`
+  `arch:`. Home Assistant no longer publishes base images for 32-bit
+  platforms; the add-on builds for `amd64` and `aarch64` only.
+- CI: `actions/checkout` v4 → v5; the CI build arg follows `build.yaml`
+  to 3.24.
+- New `.github/dependabot.yml` for GitHub Actions (monthly). Dependabot
+  cannot see the base-image pin in `build.yaml`, so that stays manual.
+
+- **No new options, no permission changes.** Operators who relied on the
+  add-on deleting the old path of a rename by hand can stop.
+
 ## 1.7.1
 
 Two field-discovered fixes to the pre-sync HA backup, from the

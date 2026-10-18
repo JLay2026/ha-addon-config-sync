@@ -399,3 +399,26 @@ HTTP 500 back, logged a warning, and left the dashboard change
 un-registered until someone restarted HA by hand. If every attempt still
 fails you now get a persistent notification ("Config Sync: HA restart
 needed") rather than only a log line.
+
+## Renames and rollback (v1.7.2)
+
+**Renames are propagated.** Before 1.7.2 a commit that renamed a tracked
+file (`git mv`, or a delete+add git judged ≥ 50 % similar) copied the new
+path into `/config` and left the old one behind, so both files loaded.
+The import now runs its diff with rename detection off; the old path is
+deleted and the new one copied in the same cycle, and the add-on log
+shows both (`Import: syncing D:packages/old.yaml A:packages/new.yaml`,
+then `Import: deleted packages/old.yaml`). If you previously cleaned up
+after renames by hand, you can stop.
+
+**Rollback removes what the sync added.** When `check_config` rejects a
+sync (or the post-sync probes fail), the add-on restores every file it
+modified or deleted from its pre-sync snapshot and now also removes the
+files that sync had *added* — they have no pre-sync copy to restore, and
+before 1.7.2 they stayed in `/config` and kept the next add-on start
+failing on the same error. Look for `Import: rollback removed added file
+<path>` in the log.
+
+**Platforms.** From 1.7.2 the add-on builds for `amd64` and `aarch64`
+only, on Alpine 3.24. Home Assistant stopped publishing 32-bit (`armv7`,
+`i386`) base images; if you are on one of those platforms, stay on 1.7.1.

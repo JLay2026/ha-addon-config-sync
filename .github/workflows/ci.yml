@@ -11,7 +11,7 @@ jobs:
     name: shellcheck run.sh
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install shellcheck
         run: sudo apt-get install -y shellcheck
       - name: Lint config-sync/run.sh
@@ -25,17 +25,18 @@ jobs:
     name: docker build (amd64 smoke)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
       - name: Build amd64 image
         # Mirrors the HA Add-on build flow: pass BUILD_FROM as the
-        # ghcr.io/home-assistant/amd64-base tag specified in build.yaml.
+        # ghcr.io/home-assistant/amd64-base tag specified in build.yaml
+        # (keep the two in step — Dependabot cannot see build.yaml).
         # Build only — don't push. Failure here means the Dockerfile
         # or run.sh broke for amd64.
         run: |
           docker build \
             --platform linux/amd64 \
-            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21 \
+            --build-arg BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.24 \
             --tag ha-addon-config-sync:ci \
             config-sync/
