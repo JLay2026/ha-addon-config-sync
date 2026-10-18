@@ -1,5 +1,7 @@
+# Home Assistant publishes base images only for the platforms it
+# supports (amd64, arm64); armv7 / i386 were dropped in 1.7.2 along
+# with the Alpine 3.21 -> 3.24 move (3.21 leaves support 2026-11-01).
+# Keep .github/workflows/ci.yml's BUILD_FROM in step with amd64 here.
 build_from:
-  amd64: "ghcr.io/home-assistant/amd64-base:3.21"
-  aarch64: "ghcr.io/home-assistant/aarch64-base:3.21"
-  armv7: "ghcr.io/home-assistant/armv7-base:3.21"
-  i386: "ghcr.io/home-assistant/i386-base:3.21"
+  amd64: "ghcr.io/home-assistant/amd64-base:3.24"
+  aarch64: "ghcr.io/home-assistant/aarch64-base:3.24"

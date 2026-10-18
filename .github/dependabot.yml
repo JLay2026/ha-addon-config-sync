@@ -1,0 +1,13 @@
+# Dependabot covers the GitHub Actions used by CI. It cannot track the
+# HA base image: that pin lives in config-sync/build.yaml as a build
+# arg, not a literal FROM, so bump it by hand when Alpine rolls
+# (https://github.com/home-assistant/docker-base/releases).
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    labels: ["dependencies"]
+    commit-message:
+      prefix: "ci"

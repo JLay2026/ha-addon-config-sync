@@ -1124,6 +1124,31 @@ post_sync_verify() {
     return 0
 }
 
+# Restore /config to its pre-sync state after a failed validation.
+# Files that existed before the sync (M and D ops) come back from
+# ${BACKUP}; files this sync ADDED have no pre-sync copy and are
+# removed instead (issue #27 — before 1.7.2 the restore loop alone
+# left them in /config, so check_config kept failing on the next
+# add-on start with no commit to explain it). Uses the do_import
+# globals CHANGED, ADDED_FILES, BACKUP.
+rollback_config_files() {
+    local f
+    while IFS= read -r f; do
+        [ -z "${f}" ] && continue
+        if [ -f "${BACKUP}/${f}" ]; then
+            mkdir -p "${CONFIG_DIR}/$(dirname "${f}")"
+            cp -p "${BACKUP}/${f}" "${CONFIG_DIR}/${f}"
+        fi
+    done <<< "${CHANGED}"
+    while IFS= read -r f; do
+        [ -z "${f}" ] && continue
+        if [ -f "${CONFIG_DIR}/${f}" ]; then
+            rm -f "${CONFIG_DIR}/${f}"
+            bashio::log.info "Import: rollback removed added file ${f}"
+        fi
+    done <<< "${ADDED_FILES}"
+}
+
 # Reconcile pass: ensure every tracked file matching sync_paths exists
 # on /config. Catches the bug class where a file is tracked in the repo
 # but was never modified in any commit reaching /config — the diff-based
@@ -1630,15 +1655,40 @@ do_import() {
         git reset --hard "origin/${BRANCH}"
     fi
 
-    # Identify changed files that pass the sync filter
-    CHANGED_ALL=$(git diff --name-only "${LOCAL}" "${REMOTE}" || true)
+    # Identify changed files that pass the sync filter.
+    #
+    # --no-renames (issue #33): git's default rename detection folds a
+    # `git mv old new` (similarity >= 50 %) into a single R entry, and
+    # --name-only then prints ONLY the new path. The old path never
+    # reached the copy loop's delete branch, so the renamed-away file
+    # stayed in /config and loaded alongside its replacement (duplicate
+    # entities, duplicate webhook_ids). With rename detection off the
+    # same commit lists `old` (D) and `new` (A) and both are handled.
+    CHANGED_ALL=$(git diff --name-only --no-renames "${LOCAL}" "${REMOTE}" || true)
     CHANGED=""
     SKIPPED=""
+    # Per-file operation as seen from /config BEFORE this sync is applied
+    # (A = new to /config, M = exists in both, D = gone from the repo).
+    # CHANGED_OPS is log-only; ADDED_FILES feeds the rollback (issue #27:
+    # a file this sync added has no pre-sync copy in ${BACKUP}, so the
+    # restore loop alone would leave it behind after a failed validation).
+    CHANGED_OPS=""
+    ADDED_FILES=""
 
     while IFS= read -r f; do
         [ -z "${f}" ] && continue
         if path_allowed "${f}"; then
             CHANGED="${CHANGED}${CHANGED:+$'\n'}${f}"
+            if [ -f "${REPO_DIR}/${f}" ]; then
+                if [ -f "${CONFIG_DIR}/${f}" ]; then
+                    CHANGED_OPS="${CHANGED_OPS}${CHANGED_OPS:+ }M:${f}"
+                else
+                    CHANGED_OPS="${CHANGED_OPS}${CHANGED_OPS:+ }A:${f}"
+                    ADDED_FILES="${ADDED_FILES}${ADDED_FILES:+$'\n'}${f}"
+                fi
+            else
+                CHANGED_OPS="${CHANGED_OPS}${CHANGED_OPS:+ }D:${f}"
+            fi
         else
             SKIPPED="${SKIPPED}${SKIPPED:+, }${f}"
         fi
@@ -1708,8 +1758,8 @@ do_import() {
     # in the status_mark_failure attribute payload.
     local backup_name="${PRE_SYNC_BACKUP_PREFIX}${REMOTE:0:8}"
 
-    bashio::log.info "Import: syncing $(echo "${CHANGED}" | tr '\n' ' ')"
-    sync_log INFO "event=files_changed count=$(echo "${CHANGED}" | wc -l | tr -d ' ') paths=$(echo "${CHANGED}" | tr '\n' ',' | sed 's/,$//')"
+    bashio::log.info "Import: syncing ${CHANGED_OPS}"
+    sync_log INFO "event=files_changed count=$(echo "${CHANGED}" | wc -l | tr -d ' ') paths=$(echo "${CHANGED}" | tr '\n' ',' | sed 's/,$//') ops=$(echo "${CHANGED_OPS}" | tr ' ' ',')"
 
     # ── Pre-sync HA backup (storage-level safety net) ────────────────
     # If this fails, we MUST roll back the git merge so the next cycle
@@ -1754,9 +1804,11 @@ do_import() {
             # the deletion to /config so the package validator / file
             # registry stays in sync. Backup loop above snapshotted
             # this file, so the rollback path restores it correctly
-            # if validation fails.
+            # if validation fails. INFO, not DEBUG: a deletion that
+            # did NOT happen is the symptom of #33, and the operator
+            # should be able to confirm it from the add-on log.
             rm -f "${CONFIG_DIR}/${f}"
-            bashio::log.debug "Import: deleted ${f}"
+            bashio::log.info "Import: deleted ${f}"
         fi
     done <<< "${CHANGED}"
 
@@ -1775,10 +1827,7 @@ do_import() {
         # the subshell exited — those survive into this branch, so the
         # log_supervisor_error helper can read them here.
         log_supervisor_error "Import: check-config API failed — rolling back"
-        while IFS= read -r f; do
-            [ -z "${f}" ] && continue
-            [ -f "${BACKUP}/${f}" ] && cp -p "${BACKUP}/${f}" "${CONFIG_DIR}/${f}"
-        done <<< "${CHANGED}"
+        rollback_config_files
         git reset --hard "${LOCAL}"
         rm -rf "${BACKUP}"
         notify_sync_failure \
@@ -1865,11 +1914,8 @@ do_import() {
             bashio::log.error "POST-SYNC VERIFICATION FAILED — rolling back"
             bashio::log.error "============================================================"
 
-            # File-level rollback (existing pattern, mirrored from invalid-check path)
-            while IFS= read -r f; do
-                [ -z "${f}" ] && continue
-                [ -f "${BACKUP}/${f}" ] && cp -p "${BACKUP}/${f}" "${CONFIG_DIR}/${f}"
-            done <<< "${CHANGED}"
+            # File-level rollback (same helper as the two check_config paths)
+            rollback_config_files
             git reset --hard "${LOCAL}"
 
             # Best-effort re-reload with the rolled-back files. If HA is
@@ -1912,10 +1958,7 @@ do_import() {
         ERROR_MSG=$(echo "${CHECK_RESULT}" | jq -r '.errors // .message // "unknown error"' 2>/dev/null)
         bashio::log.error "Import: config invalid: ${ERROR_MSG}"
         bashio::log.warning "Import: rolling back to ${LOCAL:0:8}"
-        while IFS= read -r f; do
-            [ -z "${f}" ] && continue
-            [ -f "${BACKUP}/${f}" ] && cp -p "${BACKUP}/${f}" "${CONFIG_DIR}/${f}"
-        done <<< "${CHANGED}"
+        rollback_config_files
         git reset --hard "${LOCAL}"
         rm -rf "${BACKUP}"
         notify_sync_failure \
