@@ -27,7 +27,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@v4
       - name: Build amd64 image
         # Mirrors the HA Add-on build flow: pass BUILD_FROM as the
         # ghcr.io/home-assistant/amd64-base tag specified in build.yaml
